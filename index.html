@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini KOF Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
+      background: #101116;
+      color: #f4f1e8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(225, 57, 48, 0.22), transparent 26%),
+        linear-gradient(140deg, #121419 0%, #1a1c23 48%, #111318 100%);
+      overflow: hidden;
+    }
+
+    .shell {
+      width: min(100vw, 1120px);
+      padding: 18px;
+    }
+
+    .stage-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #17191f;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: crisp-edges;
+    }
+
+    .hint {
+      margin-top: 10px;
+      min-height: 20px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: rgba(244, 241, 232, 0.72);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .hint span {
+      white-space: nowrap;
+    }
+
+    @media (max-width: 720px) {
+      body {
+        overflow: auto;
+      }
+
+      .shell {
+        padding: 8px;
+      }
+
+      .hint {
+        font-size: 12px;
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="stage-frame" aria-label="Mini KOF game">
+      <canvas id="game" width="960" height="540"></canvas>
+    </section>
+    <div class="hint">
+      <span>1 开始 / 重开　2 暂停</span>
+      <span>ASDW 移动　U/I 拳　J/K 腿</span>
+    </div>
+  </main>
+
+  <script>
+    const canvas = document.querySelector("#game");
+    const ctx = canvas.getContext("2d");
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const floorY = 438;
+    const gravity = 0.78;
+    const keys = new Map();
+    const justPressed = new Set();
+
+    const attacks = {
+      lightPunch: {
+        label: "轻拳",
+        startup: 5,
+        active: 5,
+        recovery: 13,
+        damage: 6,
+        hitstun: 17,
+        push: 4.5,
+        box: { x: 44, y: -86, w: 44, h: 22 },
+      },
+      heavyPunch: {
+        label: "重拳",
+        startup: 10,
+        active: 7,
+        recovery: 22,
+        damage: 12,
+        hitstun: 25,
+        push: 7,
+        box: { x: 50, y: -88, w: 62, h: 28 },
+      },
+      lightKick: {
+        label: "轻腿",
+        startup: 7,
+        active: 6,
+        recovery: 15,
+        damage: 8,
+        hitstun: 19,
+        push: 5,
+        box: { x: 35, y: -50, w: 70, h: 24 },
+      },
+      heavyKick: {
+        label: "重腿",
+        startup: 12,
+        active: 8,
+        recovery: 24,
+        damage: 14,
+        hitstun: 29,
+        push: 8,
+        box: { x: 44, y: -58, w: 86, h: 28 },
+      },
+    };
+
+    const keyToAttack = {
+      u: "lightPunch",
+      i: "heavyPunch",
+      j: "lightKick",
+      k: "heavyKick",
+    };
+
+    const round = {
+      running: false,
+      paused: false,
+      over: false,
+      timer: 99,
+      frame: 0,
+      message: "按 1 开始",
+      sparks: [],
+    };
+
+    function makeFighter(id, name, x, palette, controlledByPlayer) {
+      return {
+        id,
+        name,
+        x,
+        y: floorY,
+        vx: 0,
+        vy: 0,
+        w: 50,
+        h: 104,
+        facing: id === "p1" ? 1 : -1,
+        health: 100,
+        energy: 0,
+        state: "idle",
+        stateFrame: 0,
+        attackName: null,
+        hasHit: false,
+        blockTimer: 0,
+        hitFlash: 0,
+        ai: {
+          enabled: !controlledByPlayer,
+          thinkFrame: 0,
+          plan: "hold",
+          planTimer: 0,
+          attackCooldown: 0,
+          guardBias: 0.42,
+        },
+        palette,
+        controlledByPlayer,
+      };
+    }
+
+    let player = makeFighter("p1", "PLAYER", 250, {
+      suit: "#e24435",
+      trim: "#ffe068",
+      skin: "#f3c7a0",
+      shadow: "#791f27",
+    }, true);
+
+    let enemy = makeFighter("p2", "CPU", 710, {
+      suit: "#3278dc",
+      trim: "#8df0c7",
+      skin: "#f1c6a1",
+      shadow: "#143d7a",
+    }, false);
+
+    const fighters = [player, enemy];
+
+    addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      if (["a", "s", "d", "w", "u", "i", "j", "k", "1", "2"].includes(key)) {
+        event.preventDefault();
+      }
+      if (!keys.get(key)) justPressed.add(key);
+      keys.set(key, true);
+
+      if (key === "1") startRound();
+      if (key === "2" && round.running && !round.over) {
+        round.paused = !round.paused;
+        round.message = round.paused ? "暂停" : "";
+      }
+    });
+
+    addEventListener("keyup", (event) => {
+      keys.set(event.key.toLowerCase(), false);
+    });
+
+    function startRound() {
+      player = makeFighter("p1", "PLAYER", 250, player.palette, true);
+      enemy = makeFighter("p2", "CPU", 710, enemy.palette, false);
+      fighters[0] = player;
+      fighters[1] = enemy;
+      round.running = true;
+      round.paused = false;
+      round.over = false;
+      round.timer = 99;
+      round.frame = 0;
+      round.sparks = [];
+      round.message = "";
+    }
+
+    function onGround(f) {
+      return Math.abs(f.y - floorY) < 0.01;
+    }
+
+    function canAct(f) {
+      return ["idle", "walk", "crouch", "block"].includes(f.state);
+    }
+
+    function opponentOf(f) {
+      return f === player ? enemy : player;
+    }
+
+    function startAttack(f, attackName) {
+      if (!canAct(f)) return false;
+      f.state = "attack";
+      f.stateFrame = 0;
+      f.attackName = attackName;
+      f.hasHit = false;
+      f.blockTimer = 0;
+      return true;
+    }
+
+    function setState(f, state) {
+      if (f.state !== state) {
+        f.state = state;
+        f.stateFrame = 0;
+      }
+    }
+
+    function hurtbox(f) {
+      const crouch = f.state === "crouch" || f.state === "block";
+      const height = crouch ? 74 : f.h;
+      return {
+        x: f.x - f.w / 2,
+        y: f.y - height,
+        w: f.w,
+        h: height,
+      };
+    }
+
+    function pushbox(f) {
+      return {
+        x: f.x - 28,
+        y: f.y - 96,
+        w: 56,
+        h: 96,
+      };
+    }
+
+    function currentAttackData(f) {
+      return f.attackName ? attacks[f.attackName] : null;
+    }
+
+    function attackIsActive(f) {
+      const data = currentAttackData(f);
+      if (!data || f.state !== "attack") return false;
+      return f.stateFrame >= data.startup && f.stateFrame < data.startup + data.active;
+    }
+
+    function attackbox(f) {
+      const data = currentAttackData(f);
+      if (!data || !attackIsActive(f)) return null;
+      const b = data.box;
+      const x = f.facing === 1 ? f.x + b.x : f.x - b.x - b.w;
+      return { x, y: f.y + b.y, w: b.w, h: b.h };
+    }
+
+    function rectsOverlap(a, b) {
+      return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    function playerIntent() {
+      const intent = { left: false, right: false, up: false, down: false, attack: null, block: false };
+      intent.left = keys.get("a");
+      intent.right = keys.get("d");
+      intent.up = justPressed.has("w");
+      intent.down = keys.get("s");
+      for (const key of ["u", "i", "j", "k"]) {
+        if (justPressed.has(key)) intent.attack = keyToAttack[key];
+      }
+      intent.block = intent.down;
+      return intent;
+    }
+
+    function aiIntent(ai, target) {
+      const intent = { left: false, right: false, up: false, down: false, attack: null, block: false };
+      const distance = Math.abs(target.x - ai.x);
+      const incomingBox = attackbox(target);
+      const threatened = incomingBox && rectsOverlap(incomingBox, {
+        x: ai.x - 74,
+        y: ai.y - 108,
+        w: 148,
+        h: 108,
+      });
+
+      ai.ai.thinkFrame += 1;
+      ai.ai.planTimer -= 1;
+      ai.ai.attackCooldown = Math.max(0, ai.ai.attackCooldown - 1);
+
+      if (threatened && canAct(ai)) {
+        if (Math.random() < ai.ai.guardBias) {
+          intent.down = true;
+          intent.block = true;
+          ai.ai.plan = "guard";
+          ai.ai.planTimer = 12;
+          return intent;
+        }
+        ai.ai.plan = "retreat";
+        ai.ai.planTimer = 16;
+      }
+
+      if (ai.ai.planTimer <= 0 || ai.ai.thinkFrame % 18 === 0) {
+        const roll = Math.random();
+        if (distance > 210) {
+          ai.ai.plan = roll < 0.78 ? "approach" : "wait";
+          ai.ai.planTimer = 24 + Math.floor(Math.random() * 26);
+        } else if (distance > 112) {
+          ai.ai.plan = roll < 0.5 ? "approach" : roll < 0.78 ? "poke" : "retreat";
+          ai.ai.planTimer = 16 + Math.floor(Math.random() * 22);
+        } else {
+          ai.ai.plan = roll < 0.44 ? "attack" : roll < 0.68 ? "guard" : roll < 0.84 ? "retreat" : "jump";
+          ai.ai.planTimer = 12 + Math.floor(Math.random() * 18);
+        }
+      }
+
+      const targetOnRight = target.x > ai.x;
+      if (ai.ai.plan === "approach") {
+        intent.right = targetOnRight;
+        intent.left = !targetOnRight;
+      } else if (ai.ai.plan === "retreat") {
+        intent.left = targetOnRight;
+        intent.right = !targetOnRight;
+        intent.block = distance < 160;
+        intent.down = intent.block;
+      } else if (ai.ai.plan === "guard") {
+        intent.down = true;
+        intent.block = true;
+      } else if (ai.ai.plan === "jump" && onGround(ai)) {
+        intent.up = true;
+        intent.right = targetOnRight;
+        intent.left = !targetOnRight;
+      }
+
+      if (canAct(ai) && ai.ai.attackCooldown === 0) {
+        if (distance < 118 && (ai.ai.plan === "attack" || Math.random() < 0.035)) {
+          intent.attack = Math.random() < 0.55 ? "lightPunch" : "lightKick";
+          if (Math.random() < 0.26) intent.attack = Math.random() < 0.5 ? "heavyPunch" : "heavyKick";
+          ai.ai.attackCooldown = 24 + Math.floor(Math.random() * 18);
+        } else if (distance < 150 && ai.ai.plan === "poke") {
+          intent.attack = Math.random() < 0.65 ? "lightKick" : "heavyPunch";
+          ai.ai.attackCooldown = 28;
+        }
+      }
+
+      return intent;
+    }
+
+    function applyIntent(f, intent) {
+      if (f.state === "hitstun" || f.state === "knockdown") return;
+
+      if (intent.attack && startAttack(f, intent.attack)) return;
+
+      if (intent.block && onGround(f) && canAct(f)) {
+        setState(f, "block");
+        f.vx *= 0.6;
+        return;
+      }
+
+      const speed = onGround(f) ? 3.7 : 2.45;
+      if (canAct(f)) {
+        if (intent.left && !intent.right) {
+          f.vx = -speed;
+          if (onGround(f)) setState(f, "walk");
+        } else if (intent.right && !intent.left) {
+          f.vx = speed;
+          if (onGround(f)) setState(f, "walk");
+        } else {
+          f.vx *= onGround(f) ? 0.68 : 0.95;
+          if (Math.abs(f.vx) < 0.15 && onGround(f)) setState(f, intent.down ? "crouch" : "idle");
+        }
+
+        if (intent.up && onGround(f)) {
+          f.vy = -15;
+          setState(f, "jump");
+        }
+      }
+    }
+
+    function updateFighter(f) {
+      f.stateFrame += 1;
+      f.hitFlash = Math.max(0, f.hitFlash - 1);
+      f.blockTimer = Math.max(0, f.blockTimer - 1);
+
+      if (f.state === "attack") {
+        const data = currentAttackData(f);
+        f.vx *= onGround(f) ? 0.58 : 0.92;
+        if (data && f.stateFrame > data.startup + data.active + data.recovery) {
+          f.attackName = null;
+          f.hasHit = false;
+          setState(f, onGround(f) ? "idle" : "jump");
+        }
+      }
+
+      if (f.state === "hitstun") {
+        f.vx *= 0.9;
+        if (f.stateFrame > f.hitstunFrames) {
+          setState(f, onGround(f) ? "idle" : "jump");
+        }
+      }
+
+      if (f.state === "knockdown") {
+        f.vx *= 0.88;
+        if (f.stateFrame > 48 && f.health > 0) setState(f, "idle");
+      }
+
+      if (!onGround(f) || f.vy < 0) {
+        f.vy += gravity;
+        f.y += f.vy;
+        if (f.y >= floorY) {
+          f.y = floorY;
+          f.vy = 0;
+          if (f.state === "jump") setState(f, "idle");
+        }
+      }
+
+      f.x += f.vx;
+      f.x = Math.max(70, Math.min(W - 70, f.x));
+    }
+
+    function resolveFacingAndBody() {
+      player.facing = player.x <= enemy.x ? 1 : -1;
+      enemy.facing = enemy.x <= player.x ? 1 : -1;
+
+      const p = pushbox(player);
+      const e = pushbox(enemy);
+      if (rectsOverlap(p, e)) {
+        const overlap = Math.min(p.x + p.w - e.x, e.x + e.w - p.x);
+        const direction = player.x < enemy.x ? -1 : 1;
+        player.x += direction * overlap * 0.5;
+        enemy.x -= direction * overlap * 0.5;
+      }
+    }
+
+    function canBlock(defender, attacker) {
+      const holdingGuard = defender.state === "block" || defender.blockTimer > 0;
+      const facingAttack = defender.facing === (attacker.x < defender.x ? -1 : 1);
+      return holdingGuard && facingAttack && onGround(defender);
+    }
+
+    function checkHits() {
+      for (const attacker of fighters) {
+        if (attacker.state !== "attack" || attacker.hasHit) continue;
+        const box = attackbox(attacker);
+        if (!box) continue;
+
+        const defender = opponentOf(attacker);
+        if (!rectsOverlap(box, hurtbox(defender))) continue;
+
+        const data = currentAttackData(attacker);
+        attacker.hasHit = true;
+        if (canBlock(defender, attacker)) {
+          defender.blockTimer = 10;
+          defender.vx += attacker.facing * data.push * 0.55;
+          attacker.vx -= attacker.facing * 1.1;
+          spawnSpark(box.x + box.w / 2, box.y + box.h / 2, "#90e4ff", 7);
+        } else {
+          defender.health = Math.max(0, defender.health - data.damage);
+          defender.energy = Math.min(100, defender.energy + 8);
+          attacker.energy = Math.min(100, attacker.energy + 5);
+          defender.hitFlash = 8;
+          defender.hitstunFrames = data.hitstun;
+          defender.vx = attacker.facing * data.push;
+          defender.vy = defender.health <= 0 ? -7 : defender.vy;
+          setState(defender, defender.health <= 0 ? "knockdown" : "hitstun");
+          spawnSpark(box.x + box.w / 2, box.y + box.h / 2, "#ffd166", 12);
+        }
+      }
+    }
+
+    function spawnSpark(x, y, color, count) {
+      for (let i = 0; i < count; i += 1) {
+        round.sparks.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 7,
+          vy: (Math.random() - 0.8) * 6,
+          life: 18 + Math.random() * 10,
+          color,
+        });
+      }
+    }
+
+    function updateSparks() {
+      round.sparks = round.sparks.filter((s) => {
+        s.life -= 1;
+        s.x += s.vx;
+        s.y += s.vy;
+        s.vy += 0.24;
+        return s.life > 0;
+      });
+    }
+
+    function updateRound() {
+      if (!round.running || round.paused || round.over) return;
+
+      round.frame += 1;
+      if (round.frame % 60 === 0) round.timer = Math.max(0, round.timer - 1);
+
+      applyIntent(player, playerIntent());
+      applyIntent(enemy, aiIntent(enemy, player));
+      updateFighter(player);
+      updateFighter(enemy);
+      resolveFacingAndBody();
+      checkHits();
+      updateSparks();
+
+      if (player.health <= 0 || enemy.health <= 0 || round.timer <= 0) {
+        round.over = true;
+        const pScore = player.health + (player.energy * 0.1);
+        const eScore = enemy.health + (enemy.energy * 0.1);
+        round.message = pScore === eScore ? "DRAW" : pScore > eScore ? "YOU WIN" : "CPU WINS";
+      }
+    }
+
+    function drawStage() {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, "#202734");
+      sky.addColorStop(0.56, "#382730");
+      sky.addColorStop(1, "#171515");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = "rgba(255, 225, 150, 0.08)";
+      for (let i = 0; i < 9; i += 1) {
+        const x = i * 128 - ((round.frame * 0.3) % 128);
+        ctx.fillRect(x, 70 + (i % 3) * 18, 54, 180);
+      }
+
+      ctx.fillStyle = "#24202a";
+      ctx.fillRect(0, floorY, W, H - floorY);
+      ctx.fillStyle = "#383340";
+      ctx.fillRect(0, floorY, W, 12);
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.lineWidth = 1;
+      for (let x = -80; x < W + 80; x += 80) {
+        ctx.beginPath();
+        ctx.moveTo(x, floorY);
+        ctx.lineTo(x + 52, H);
+        ctx.stroke();
+      }
+    }
+
+    function drawHealthBar(x, y, width, value, name, alignRight, color) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+      ctx.fillRect(x, y, width, 22);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.34)";
+      ctx.strokeRect(x, y, width, 22);
+
+      const fill = Math.max(0, value) / 100 * width;
+      ctx.fillStyle = color;
+      const fillX = alignRight ? x + width - fill : x;
+      ctx.fillRect(fillX, y, fill, 22);
+
+      ctx.fillStyle = "#f5efe6";
+      ctx.font = "700 16px Inter, sans-serif";
+      ctx.textAlign = alignRight ? "right" : "left";
+      ctx.fillText(name, alignRight ? x + width : x, y - 8);
+    }
+
+    function drawHud() {
+      drawHealthBar(38, 38, 350, player.health, player.name, false, "#df3f35");
+      drawHealthBar(W - 388, 38, 350, enemy.health, enemy.name, true, "#3379df");
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.52)";
+      ctx.fillRect(W / 2 - 48, 24, 96, 64);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
+      ctx.strokeRect(W / 2 - 48, 24, 96, 64);
+      ctx.fillStyle = "#f8ecd8";
+      ctx.font = "800 34px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(String(round.timer).padStart(2, "0"), W / 2, 67);
+
+      drawEnergy(38, 68, player.energy, false, "#ffe068");
+      drawEnergy(W - 238, 68, enemy.energy, true, "#8df0c7");
+    }
+
+    function drawEnergy(x, y, value, alignRight, color) {
+      const width = 200;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.32)";
+      ctx.fillRect(x, y, width, 8);
+      ctx.fillStyle = color;
+      const fill = value / 100 * width;
+      ctx.fillRect(alignRight ? x + width - fill : x, y, fill, 8);
+    }
+
+    function drawFighter(f) {
+      ctx.save();
+      ctx.translate(f.x, f.y);
+      ctx.scale(f.facing, 1);
+
+      const bob = f.state === "walk" ? Math.sin(f.stateFrame * 0.35) * 2 : 0;
+      const crouch = f.state === "crouch" || f.state === "block";
+      const bodyH = crouch ? 70 : 94;
+      const flash = f.hitFlash > 0;
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.34)";
+      ctx.beginPath();
+      ctx.ellipse(0, 4, 42, 11, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = flash ? "#fff3ca" : f.palette.shadow;
+      ctx.fillRect(-26, -bodyH + bob, 52, bodyH - 18);
+
+      ctx.fillStyle = flash ? "#fff9df" : f.palette.suit;
+      ctx.fillRect(-22, -bodyH - 2 + bob, 44, bodyH - 26);
+
+      ctx.fillStyle = f.palette.trim;
+      ctx.fillRect(-22, -bodyH + 18 + bob, 44, 9);
+      ctx.fillRect(-18, -24 + bob, 14, 28);
+      ctx.fillRect(4, -24 + bob, 14, 28);
+
+      ctx.fillStyle = flash ? "#ffffff" : f.palette.skin;
+      ctx.fillRect(-17, -bodyH - 30 + bob, 34, 28);
+
+      ctx.fillStyle = "#181318";
+      ctx.fillRect(3, -bodyH - 22 + bob, 6, 5);
+
+      const guard = f.state === "block";
+      let leftArm = { x: -38, y: -bodyH + 12 + bob, w: 16, h: 48 };
+      let rightArm = { x: 22, y: -bodyH + 12 + bob, w: 16, h: 48 };
+
+      if (f.state === "attack") {
+        const data = currentAttackData(f);
+        const progress = Math.min(1, f.stateFrame / Math.max(1, data.startup + data.active));
+        const thrust = attackIsActive(f) ? 34 : progress * 20;
+        if (f.attackName.includes("Punch")) {
+          rightArm = { x: 20, y: -bodyH + 16 + bob, w: 28 + thrust, h: 18 };
+        } else {
+          rightArm = { x: 8, y: -48 + bob, w: 70 + thrust, h: 18 };
+        }
+      } else if (guard) {
+        leftArm = { x: -10, y: -bodyH + 6 + bob, w: 17, h: 54 };
+        rightArm = { x: 8, y: -bodyH + 6 + bob, w: 17, h: 54 };
+      }
+
+      ctx.fillStyle = flash ? "#fff8de" : f.palette.skin;
+      ctx.fillRect(leftArm.x, leftArm.y, leftArm.w, leftArm.h);
+      ctx.fillRect(rightArm.x, rightArm.y, rightArm.w, rightArm.h);
+
+      ctx.restore();
+
+      const hb = hurtbox(f);
+      ctx.strokeStyle = "rgba(120, 220, 255, 0.32)";
+      ctx.strokeRect(hb.x, hb.y, hb.w, hb.h);
+
+      const ab = attackbox(f);
+      if (ab) {
+        ctx.fillStyle = "rgba(255, 72, 72, 0.26)";
+        ctx.fillRect(ab.x, ab.y, ab.w, ab.h);
+        ctx.strokeStyle = "rgba(255, 235, 120, 0.84)";
+        ctx.strokeRect(ab.x, ab.y, ab.w, ab.h);
+      }
+
+      if (f.state === "attack") {
+        const data = currentAttackData(f);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.76)";
+        ctx.font = "700 13px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(data.label, f.x, f.y - f.h - 46);
+      }
+    }
+
+    function drawSparks() {
+      for (const s of round.sparks) {
+        ctx.globalAlpha = Math.max(0, Math.min(1, s.life / 22));
+        ctx.fillStyle = s.color;
+        ctx.fillRect(s.x - 3, s.y - 3, 6, 6);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawMessage() {
+      if (!round.message && round.running) return;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#fff4dd";
+      ctx.font = "900 50px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(round.message || "按 1 开始", W / 2, H / 2 - 8);
+      ctx.font = "600 18px Inter, sans-serif";
+      ctx.fillStyle = "rgba(255, 244, 221, 0.76)";
+      ctx.fillText("1", W / 2, H / 2 + 34);
+    }
+
+    function draw() {
+      drawStage();
+      drawHud();
+      drawFighter(player.x < enemy.x ? player : enemy);
+      drawFighter(player.x < enemy.x ? enemy : player);
+      drawSparks();
+      drawMessage();
+    }
+
+    function frame() {
+      updateRound();
+      draw();
+      justPressed.clear();
+      requestAnimationFrame(frame);
+    }
+
+    draw();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
