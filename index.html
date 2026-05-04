@@ -105,6 +105,7 @@
     const maxFrameMs = simStepMs * 5;
     const keys = new Map();
     const justPressed = new Set();
+    const showDebugBoxes = false;
     const inputConfig = {
       crouchTapHoldFrames: 4,
       attackBufferFrames: 10,
@@ -337,7 +338,40 @@
       },
     };
 
-    function makeFighter(id, name, x, palette, controlledByPlayer) {
+    const spriteFrame = {
+      idleA: 0,
+      idleB: 1,
+      walkA: 2,
+      walkB: 3,
+      run: 4,
+      crouch: 5,
+      guard: 6,
+      punch: 7,
+      kick: 8,
+      antiAir: 9,
+      jumpPunch: 10,
+      jumpKick: 11,
+      sweep: 12,
+      hit: 13,
+    };
+    const spriteSheets = {
+      kyo: {
+        image: Object.assign(new Image(), { src: "assets/sprites/kyo-chibi.svg" }),
+        frameW: 48,
+        frameH: 64,
+        scale: 2.45,
+        flame: "#ff8a22",
+      },
+      iori: {
+        image: Object.assign(new Image(), { src: "assets/sprites/iori-chibi.svg" }),
+        frameW: 48,
+        frameH: 64,
+        scale: 2.45,
+        flame: "#8b5cff",
+      },
+    };
+
+    function makeFighter(id, name, x, palette, controlledByPlayer, spriteKey) {
       return {
         id,
         name,
@@ -371,22 +405,23 @@
         },
         palette,
         controlledByPlayer,
+        spriteKey,
       };
     }
 
-    let player = makeFighter("p1", "PLAYER", 250, {
-      suit: "#e24435",
-      trim: "#ffe068",
+    let player = makeFighter("p1", "草薙京", 250, {
+      suit: "#191b22",
+      trim: "#ff8a22",
       skin: "#f3c7a0",
-      shadow: "#791f27",
-    }, true);
+      shadow: "#0d0f13",
+    }, true, "kyo");
 
-    let enemy = makeFighter("p2", "CPU", 710, {
-      suit: "#3278dc",
-      trim: "#8df0c7",
+    let enemy = makeFighter("p2", "八神庵", 710, {
+      suit: "#8f1e2d",
+      trim: "#b99cff",
       skin: "#f1c6a1",
-      shadow: "#143d7a",
-    }, false);
+      shadow: "#250d18",
+    }, false, "iori");
 
     const fighters = [player, enemy];
 
@@ -420,8 +455,8 @@
     });
 
     function startRound() {
-      player = makeFighter("p1", "PLAYER", 250, player.palette, true);
-      enemy = makeFighter("p2", "CPU", 710, enemy.palette, false);
+      player = makeFighter("p1", "草薙京", 250, player.palette, true, player.spriteKey);
+      enemy = makeFighter("p2", "八神庵", 710, enemy.palette, false, enemy.spriteKey);
       fighters[0] = player;
       fighters[1] = enemy;
       round.running = true;
@@ -1088,8 +1123,8 @@
     }
 
     function drawHud() {
-      drawHealthBar(38, 38, 350, player.health, player.name, false, "#df3f35");
-      drawHealthBar(W - 388, 38, 350, enemy.health, enemy.name, true, "#3379df");
+      drawHealthBar(38, 38, 350, player.health, player.name, false, "#ff8a22");
+      drawHealthBar(W - 388, 38, 350, enemy.health, enemy.name, true, "#8f1e2d");
 
       ctx.fillStyle = "rgba(0, 0, 0, 0.52)";
       ctx.fillRect(W / 2 - 48, 24, 96, 64);
@@ -1100,8 +1135,8 @@
       ctx.textAlign = "center";
       ctx.fillText(String(round.timer).padStart(2, "0"), W / 2, 67);
 
-      drawEnergy(38, 68, player.energy, false, "#ffe068");
-      drawEnergy(W - 238, 68, enemy.energy, true, "#8df0c7");
+      drawEnergy(38, 68, player.energy, false, "#ffd166");
+      drawEnergy(W - 238, 68, enemy.energy, true, "#b99cff");
       drawCombo();
     }
 
@@ -1134,84 +1169,113 @@
       ctx.restore();
     }
 
-    function drawFighter(f) {
-      ctx.save();
-      ctx.translate(f.x, f.y);
-      ctx.scale(f.facing, 1);
-
+    function spriteFrameName(f) {
       const activeAttack = currentAttackData(f);
-      const airbornePose = !onGround(f) || (f.state === "attack" && activeAttack && activeAttack.airborne);
-      const bob = f.state === "walk" || f.state === "run" ? Math.sin(f.stateFrame * 0.35) * 2 : airbornePose ? -3 : 0;
-      const crouch = isCrouchingPosture(f);
-      const bodyH = crouch ? 70 : 94;
-      const flash = f.hitFlash > 0;
+      if (f.state === "knockdown") return "hit";
+      if (f.state === "hitstun") return "hit";
+      if (["guardStartup", "block", "blockstun"].includes(f.state)) return "guard";
+      if (f.state === "crouch") return "crouch";
+      if (f.state === "attack" && activeAttack) {
+        if (activeAttack.pose === "jumpPunch") return "jumpPunch";
+        if (activeAttack.pose === "jumpKick") return "jumpKick";
+        if (activeAttack.pose === "antiAir") return "antiAir";
+        if (activeAttack.pose === "sweep" || activeAttack.pose === "lowKick") return "sweep";
+        return f.attackName.includes("Punch") ? "punch" : "kick";
+      }
+      if (!onGround(f) || f.state === "backHop") return f.vy < 0 ? "jumpPunch" : "jumpKick";
+      if (f.state === "run") return "run";
+      if (f.state === "walk") return Math.floor(f.stateFrame / 7) % 2 ? "walkA" : "walkB";
+      return Math.floor(f.stateFrame / 24) % 2 ? "idleA" : "idleB";
+    }
+
+    function drawAttackAura(f, frameName) {
+      if (f.state !== "attack") return;
+      const sheet = spriteSheets[f.spriteKey];
+      const pulse = Math.sin(round.frame * 0.35) * 0.5 + 0.5;
+      const x = f.x + f.facing * (frameName.toLowerCase().includes("kick") || frameName === "sweep" ? 72 : 56);
+      const y = f.y - (frameName === "antiAir" ? 132 : frameName.startsWith("jump") ? 92 : 76);
+
+      ctx.save();
+      ctx.globalAlpha = 0.5 + pulse * 0.28;
+      ctx.fillStyle = sheet.flame;
+      ctx.fillRect(x - 10, y - 7, 20, 8);
+      ctx.fillRect(x - 5, y - 18, 10, 12);
+      ctx.fillStyle = "rgba(255, 240, 190, 0.74)";
+      ctx.fillRect(x - 3, y - 10, 6, 7);
+      ctx.restore();
+    }
+
+    function drawSpriteFighter(f) {
+      const sheet = spriteSheets[f.spriteKey];
+      const frameName = spriteFrameName(f);
+      const frameIndex = spriteFrame[frameName] ?? 0;
+      const displayW = sheet.frameW * sheet.scale;
+      const displayH = sheet.frameH * sheet.scale;
+      const bob = f.state === "walk" || f.state === "run" ? Math.sin(f.stateFrame * 0.38) * 3 : 0;
 
       ctx.fillStyle = "rgba(0, 0, 0, 0.34)";
       ctx.beginPath();
-      ctx.ellipse(0, 4, 42, 11, 0, 0, Math.PI * 2);
+      ctx.ellipse(f.x, f.y + 5, 48, 12, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = flash ? "#fff3ca" : f.palette.shadow;
-      ctx.fillRect(-26, -bodyH + bob, 52, bodyH - 18);
+      drawAttackAura(f, frameName);
 
-      ctx.fillStyle = flash ? "#fff9df" : f.palette.suit;
-      ctx.fillRect(-22, -bodyH - 2 + bob, 44, bodyH - 26);
+      ctx.save();
+      ctx.translate(f.x, f.y + bob);
+      ctx.scale(f.facing, 1);
+      if (f.hitFlash > 0) {
+        ctx.globalAlpha = 0.38;
+        ctx.fillStyle = "#fff6d8";
+        ctx.fillRect(-displayW / 2 - 2, -displayH - 2, displayW + 4, displayH + 4);
+        ctx.globalAlpha = 1;
+      }
+      ctx.drawImage(
+        sheet.image,
+        frameIndex * sheet.frameW,
+        0,
+        sheet.frameW,
+        sheet.frameH,
+        -displayW / 2,
+        -displayH,
+        displayW,
+        displayH
+      );
+      ctx.restore();
+    }
 
-      ctx.fillStyle = f.palette.trim;
-      ctx.fillRect(-22, -bodyH + 18 + bob, 44, 9);
-      ctx.fillRect(-18, -24 + bob, 14, 28);
-      ctx.fillRect(4, -24 + bob, 14, 28);
+    function drawFallbackFighter(f) {
+      ctx.save();
+      ctx.translate(f.x, f.y);
+      ctx.scale(f.facing, 1);
+      ctx.fillStyle = f.palette.shadow;
+      ctx.fillRect(-24, -94, 48, 78);
+      ctx.fillStyle = f.palette.suit;
+      ctx.fillRect(-20, -92, 40, 66);
+      ctx.fillStyle = f.palette.skin;
+      ctx.fillRect(-18, -124, 36, 30);
+      ctx.restore();
+    }
 
-      ctx.fillStyle = flash ? "#ffffff" : f.palette.skin;
-      ctx.fillRect(-17, -bodyH - 30 + bob, 34, 28);
-
-      ctx.fillStyle = "#181318";
-      ctx.fillRect(3, -bodyH - 22 + bob, 6, 5);
-
-      const guard = ["guardStartup", "block", "blockstun"].includes(f.state);
-      let leftArm = { x: -38, y: -bodyH + 12 + bob, w: 16, h: 48 };
-      let rightArm = { x: 22, y: -bodyH + 12 + bob, w: 16, h: 48 };
-
-      if (f.state === "attack") {
-        const data = activeAttack;
-        const progress = Math.min(1, f.stateFrame / Math.max(1, data.startup + data.active));
-        const thrust = attackIsActive(f) ? 34 : progress * 20;
-        if (data.pose === "jumpPunch") {
-          leftArm = { x: -30, y: -bodyH + 8 + bob, w: 14, h: 34 };
-          rightArm = { x: 18, y: -bodyH - 4 + bob, w: 42 + thrust, h: 17 };
-        } else if (data.pose === "jumpKick") {
-          leftArm = { x: -30, y: -bodyH + 4 + bob, w: 14, h: 34 };
-          rightArm = { x: 12, y: -58 + bob, w: 74 + thrust, h: 18 };
-        } else if (data.pose === "antiAir") {
-          rightArm = { x: 10, y: -bodyH - 30 + bob, w: 18, h: 76 };
-        } else if (data.pose === "sweep" || data.pose === "lowKick") {
-          rightArm = { x: 6, y: -28 + bob, w: 78 + thrust, h: 15 };
-        } else if (f.attackName.includes("Punch")) {
-          rightArm = { x: 20, y: -bodyH + 16 + bob, w: 28 + thrust, h: 18 };
-        } else {
-          rightArm = { x: 8, y: -48 + bob, w: 70 + thrust, h: 18 };
-        }
-      } else if (guard) {
-        leftArm = { x: -10, y: -bodyH + 6 + bob, w: 17, h: 54 };
-        rightArm = { x: 8, y: -bodyH + 6 + bob, w: 17, h: 54 };
+    function drawFighter(f) {
+      const sheet = spriteSheets[f.spriteKey];
+      if (sheet && sheet.image.complete && sheet.image.naturalWidth > 0) {
+        drawSpriteFighter(f);
+      } else {
+        drawFallbackFighter(f);
       }
 
-      ctx.fillStyle = flash ? "#fff8de" : f.palette.skin;
-      ctx.fillRect(leftArm.x, leftArm.y, leftArm.w, leftArm.h);
-      ctx.fillRect(rightArm.x, rightArm.y, rightArm.w, rightArm.h);
+      if (showDebugBoxes) {
+        const hb = hurtbox(f);
+        ctx.strokeStyle = "rgba(120, 220, 255, 0.32)";
+        ctx.strokeRect(hb.x, hb.y, hb.w, hb.h);
 
-      ctx.restore();
-
-      const hb = hurtbox(f);
-      ctx.strokeStyle = "rgba(120, 220, 255, 0.32)";
-      ctx.strokeRect(hb.x, hb.y, hb.w, hb.h);
-
-      const ab = attackbox(f);
-      if (ab) {
-        ctx.fillStyle = "rgba(255, 72, 72, 0.26)";
-        ctx.fillRect(ab.x, ab.y, ab.w, ab.h);
-        ctx.strokeStyle = "rgba(255, 235, 120, 0.84)";
-        ctx.strokeRect(ab.x, ab.y, ab.w, ab.h);
+        const ab = attackbox(f);
+        if (ab) {
+          ctx.fillStyle = "rgba(255, 72, 72, 0.26)";
+          ctx.fillRect(ab.x, ab.y, ab.w, ab.h);
+          ctx.strokeStyle = "rgba(255, 235, 120, 0.84)";
+          ctx.strokeRect(ab.x, ab.y, ab.w, ab.h);
+        }
       }
 
       if (f.state === "attack") {
@@ -1219,12 +1283,12 @@
         ctx.fillStyle = "rgba(255, 255, 255, 0.76)";
         ctx.font = "700 13px Inter, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(data.label, f.x, f.y - f.h - 46);
+        ctx.fillText(data.label, f.x, f.y - f.h - 50);
       } else if (f.state === "hitstun") {
         ctx.fillStyle = "rgba(255, 218, 120, 0.86)";
         ctx.font = "700 13px Inter, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("\u4e0d\u80fd\u9632\u5fa1", f.x, f.y - f.h - 46);
+        ctx.fillText("\u4e0d\u80fd\u9632\u5fa1", f.x, f.y - f.h - 50);
       }
     }
 

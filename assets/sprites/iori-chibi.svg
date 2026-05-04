@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="672" height="64" viewBox="0 0 672 64" shape-rendering="crispEdges">
+  <defs>
+    <style>
+      .o{fill:#160d12}.hair{fill:#8f1e2d}.hair2{fill:#d9414c}.skin{fill:#efbd96}.skin2{fill:#cf876b}.coat{fill:#17141b}.shirt{fill:#e8e5dc}.pants{fill:#a22731}.pants2{fill:#681823}.shoe{fill:#0e0c12}.chain{fill:#cfc9bd}.flame{fill:#7b45ff}.flame2{fill:#d7b8ff}
+    </style>
+    <g id="body">
+      <rect class="o" x="13" y="27" width="22" height="22"/><rect class="coat" x="15" y="29" width="18" height="19"/><rect class="shirt" x="20" y="29" width="7" height="18"/><rect class="o" x="16" y="47" width="8" height="12"/><rect class="o" x="25" y="47" width="8" height="12"/><rect class="pants" x="17" y="47" width="6" height="11"/><rect class="pants2" x="26" y="47" width="6" height="11"/><rect class="chain" x="22" y="49" width="2" height="2"/><rect class="chain" x="25" y="52" width="2" height="2"/><rect class="shoe" x="14" y="58" width="10" height="3"/><rect class="shoe" x="25" y="58" width="10" height="3"/>
+      <rect class="o" x="12" y="12" width="24" height="19"/><rect class="skin" x="14" y="15" width="20" height="15"/><rect class="skin2" x="30" y="22" width="3" height="4"/><rect class="hair" x="9" y="7" width="28" height="8"/><rect class="hair2" x="14" y="5" width="13" height="7"/><rect class="hair" x="11" y="14" width="8" height="12"/><rect class="hair2" x="26" y="11" width="10" height="6"/><rect class="o" x="20" y="23" width="3" height="3"/><rect class="o" x="29" y="23" width="3" height="3"/>
+    </g>
+    <g id="idle">
+      <use href="#body"/><rect class="o" x="9" y="29" width="6" height="17"/><rect class="skin" x="10" y="31" width="4" height="14"/><rect class="o" x="33" y="29" width="6" height="17"/><rect class="skin" x="34" y="31" width="4" height="14"/>
+    </g>
+    <g id="crouch">
+      <g transform="translate(0,7)"><use href="#body"/></g><rect class="o" x="10" y="52" width="27" height="7"/><rect class="pants" x="13" y="52" width="20" height="5"/><rect class="o" x="8" y="38" width="8" height="15"/><rect class="skin" x="10" y="39" width="5" height="12"/><rect class="o" x="31" y="39" width="8" height="15"/><rect class="skin" x="32" y="40" width="5" height="12"/>
+    </g>
+    <g id="guard">
+      <use href="#body"/><rect class="o" x="13" y="27" width="9" height="24"/><rect class="skin" x="15" y="29" width="6" height="19"/><rect class="o" x="25" y="27" width="9" height="24"/><rect class="skin" x="26" y="29" width="6" height="19"/>
+    </g>
+    <g id="punch">
+      <use href="#body"/><rect class="o" x="9" y="30" width="6" height="16"/><rect class="skin" x="10" y="31" width="4" height="13"/><rect class="o" x="33" y="29" width="15" height="7"/><rect class="skin" x="34" y="30" width="13" height="5"/><rect class="flame" x="45" y="25" width="4" height="7"/><rect class="flame2" x="49" y="28" width="3" height="4"/><rect class="flame" x="47" y="34" width="3" height="5"/>
+    </g>
+    <g id="kick">
+      <use href="#body"/><rect class="o" x="9" y="29" width="6" height="17"/><rect class="skin" x="10" y="31" width="4" height="14"/><rect class="o" x="33" y="30" width="6" height="16"/><rect class="skin" x="34" y="32" width="4" height="13"/><rect class="o" x="31" y="45" width="17" height="8"/><rect class="pants" x="32" y="47" width="13" height="5"/><rect class="shoe" x="44" y="47" width="8" height="5"/><rect class="flame" x="51" y="43" width="3" height="6"/><rect class="flame2" x="54" y="46" width="2" height="3"/>
+    </g>
+    <g id="anti">
+      <use href="#body"/><rect class="o" x="8" y="30" width="6" height="16"/><rect class="skin" x="9" y="32" width="4" height="13"/><rect class="o" x="29" y="1" width="7" height="30"/><rect class="skin" x="30" y="3" width="5" height="26"/><rect class="flame" x="34" y="0" width="5" height="8"/><rect class="flame2" x="38" y="3" width="3" height="5"/>
+    </g>
+    <g id="jumpPunch">
+      <g transform="translate(0,-5)"><use href="#body"/></g><rect class="o" x="8" y="24" width="7" height="17"/><rect class="skin" x="9" y="25" width="5" height="14"/><rect class="o" x="33" y="22" width="15" height="7"/><rect class="skin" x="34" y="23" width="13" height="5"/><rect class="flame" x="47" y="18" width="4" height="6"/><rect class="flame2" x="51" y="21" width="3" height="4"/>
+    </g>
+    <g id="jumpKick">
+      <g transform="translate(0,-5)"><use href="#body"/></g><rect class="o" x="8" y="24" width="6" height="17"/><rect class="skin" x="9" y="25" width="4" height="14"/><rect class="o" x="31" y="38" width="18" height="8"/><rect class="pants" x="32" y="39" width="14" height="5"/><rect class="shoe" x="45" y="39" width="8" height="5"/><rect class="flame" x="52" y="35" width="3" height="7"/><rect class="flame2" x="55" y="38" width="2" height="4"/>
+    </g>
+    <g id="sweep">
+      <g transform="translate(0,8)"><use href="#body"/></g><rect class="o" x="7" y="53" width="37" height="6"/><rect class="pants" x="10" y="54" width="29" height="4"/><rect class="shoe" x="40" y="53" width="8" height="5"/>
+    </g>
+    <g id="hit">
+      <g transform="translate(-3,2) rotate(-5 24 35)"><use href="#body"/></g><rect class="o" x="34" y="31" width="6" height="15"/><rect class="skin" x="35" y="32" width="4" height="12"/>
+    </g>
+  </defs>
+  <use href="#idle" x="0" y="0"/><use href="#idle" x="48" y="-1"/><use href="#idle" x="96" y="0"/><use href="#idle" x="144" y="-2"/><use href="#idle" x="192" y="-1"/><use href="#crouch" x="240" y="0"/><use href="#guard" x="288" y="0"/><use href="#punch" x="336" y="0"/><use href="#kick" x="384" y="0"/><use href="#anti" x="432" y="0"/><use href="#jumpPunch" x="480" y="0"/><use href="#jumpKick" x="528" y="0"/><use href="#sweep" x="576" y="0"/><use href="#hit" x="624" y="0"/>
+</svg>
