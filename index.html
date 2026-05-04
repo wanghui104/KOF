@@ -233,6 +233,66 @@
         pose: "sweep",
         box: { x: 34, y: -32, w: 96, h: 22 },
       },
+      jumpLightPunch: {
+        label: "\u8df3\u8f7b\u62f3",
+        startup: 5,
+        active: 8,
+        recovery: 13,
+        damage: 7,
+        hitstun: 18,
+        push: 4.8,
+        hitRecoil: 0.8,
+        hitLevel: "overhead",
+        mustStandBlock: true,
+        airborne: true,
+        pose: "jumpPunch",
+        box: { x: 30, y: -88, w: 52, h: 24 },
+      },
+      jumpLightKick: {
+        label: "\u8df3\u8f7b\u817f",
+        startup: 6,
+        active: 9,
+        recovery: 15,
+        damage: 8,
+        hitstun: 20,
+        push: 5.4,
+        hitRecoil: 0.7,
+        hitLevel: "overhead",
+        mustStandBlock: true,
+        airborne: true,
+        pose: "jumpKick",
+        box: { x: 26, y: -66, w: 72, h: 24 },
+      },
+      jumpHeavyPunch: {
+        label: "\u8df3\u91cd\u62f3",
+        startup: 8,
+        active: 8,
+        recovery: 18,
+        damage: 12,
+        hitstun: 24,
+        push: 6.8,
+        hitRecoil: 0.9,
+        hitLevel: "overhead",
+        mustStandBlock: true,
+        airborne: true,
+        pose: "jumpPunch",
+        box: { x: 34, y: -92, w: 66, h: 30 },
+      },
+      jumpHeavyKick: {
+        label: "\u8df3\u91cd\u817f",
+        startup: 9,
+        active: 10,
+        recovery: 20,
+        damage: 14,
+        hitstun: 27,
+        push: 7.6,
+        hitRecoil: 0.75,
+        hitLevel: "overhead",
+        mustStandBlock: true,
+        airborne: true,
+        pose: "jumpKick",
+        box: { x: 24, y: -72, w: 88, h: 28 },
+      },
     };
 
     const keyToAttack = {
@@ -246,6 +306,12 @@
       lightKick: "crouchLightKick",
       heavyPunch: "crouchHeavyPunch",
       heavyKick: "crouchHeavyKick",
+    };
+    const jumpAttackNames = {
+      lightPunch: "jumpLightPunch",
+      lightKick: "jumpLightKick",
+      heavyPunch: "jumpHeavyPunch",
+      heavyKick: "jumpHeavyKick",
     };
 
     const round = {
@@ -365,7 +431,7 @@
     }
 
     function canAct(f) {
-      return ["idle", "walk", "crouch"].includes(f.state);
+      return ["idle", "walk", "crouch", "jump"].includes(f.state);
     }
 
     function opponentOf(f) {
@@ -388,6 +454,7 @@
 
     function attackNameFromIntent(f, intent) {
       if (!intent.attack) return null;
+      if (!onGround(f)) return jumpAttackNames[intent.attack];
       const wantsCrouchAttack = intent.down && onGround(f);
       return wantsCrouchAttack ? crouchAttackNames[intent.attack] : intent.attack;
     }
@@ -430,7 +497,7 @@
     }
 
     function startAttack(f, attackName, force = false) {
-      if (!force && !canAct(f)) return false;
+      if (!attacks[attackName] || (!force && !canAct(f))) return false;
       f.state = "attack";
       f.stateFrame = 0;
       f.attackName = attackName;
@@ -670,7 +737,7 @@
         }
 
         if (intent.up && onGround(f)) {
-          f.vy = -15;
+          f.vy = -18;
           setState(f, "jump");
         }
       }
@@ -968,7 +1035,9 @@
       ctx.translate(f.x, f.y);
       ctx.scale(f.facing, 1);
 
-      const bob = f.state === "walk" ? Math.sin(f.stateFrame * 0.35) * 2 : 0;
+      const activeAttack = currentAttackData(f);
+      const airbornePose = !onGround(f) || (f.state === "attack" && activeAttack && activeAttack.airborne);
+      const bob = f.state === "walk" ? Math.sin(f.stateFrame * 0.35) * 2 : airbornePose ? -3 : 0;
       const crouch = isCrouchingPosture(f);
       const bodyH = crouch ? 70 : 94;
       const flash = f.hitFlash > 0;
@@ -1000,10 +1069,16 @@
       let rightArm = { x: 22, y: -bodyH + 12 + bob, w: 16, h: 48 };
 
       if (f.state === "attack") {
-        const data = currentAttackData(f);
+        const data = activeAttack;
         const progress = Math.min(1, f.stateFrame / Math.max(1, data.startup + data.active));
         const thrust = attackIsActive(f) ? 34 : progress * 20;
-        if (data.pose === "antiAir") {
+        if (data.pose === "jumpPunch") {
+          leftArm = { x: -30, y: -bodyH + 8 + bob, w: 14, h: 34 };
+          rightArm = { x: 18, y: -bodyH - 4 + bob, w: 42 + thrust, h: 17 };
+        } else if (data.pose === "jumpKick") {
+          leftArm = { x: -30, y: -bodyH + 4 + bob, w: 14, h: 34 };
+          rightArm = { x: 12, y: -58 + bob, w: 74 + thrust, h: 18 };
+        } else if (data.pose === "antiAir") {
           rightArm = { x: 10, y: -bodyH - 30 + bob, w: 18, h: 76 };
         } else if (data.pose === "sweep" || data.pose === "lowKick") {
           rightArm = { x: 6, y: -28 + bob, w: 78 + thrust, h: 15 };
