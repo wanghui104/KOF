@@ -88,7 +88,7 @@
     </section>
     <div class="hint">
       <span>1 开始 / 重开　2 暂停</span>
-      <span>ASDW 移动　U轻拳 I轻腿 J重拳 K重腿　S蹲 / S+攻击</span>
+      <span>ASDW 移动　轻点W小跳 / 按住W跳　前前跑 / 后后跳　U轻拳 I轻腿 J重拳 K重腿　S蹲 / S+攻击</span>
     </div>
   </main>
 
@@ -108,9 +108,16 @@
     const inputConfig = {
       crouchTapHoldFrames: 4,
       attackBufferFrames: 10,
+      dashTapFrames: 14,
+      dashBufferFrames: 8,
+      jumpSpeed: -18,
+      shortHopSpeed: -12,
+      jumpCutSpeed: -8,
     };
     let crouchTapFrames = 0;
     let attackBuffer = { name: null, frames: 0 };
+    let directionTap = { direction: null, frames: 0 };
+    let movementBuffer = { action: null, direction: 0, frames: 0 };
     const guardConfig = {
       startup: 1,
       recovery: 2,
@@ -391,6 +398,7 @@
       if (!keys.get(key)) {
         justPressed.add(key);
         if (key === "s") crouchTapFrames = inputConfig.crouchTapHoldFrames;
+        if (key === "a" || key === "d") registerDirectionTap(key);
       }
       if (keyToAttack[key]) {
         attackBuffer.name = keyToAttack[key];
@@ -406,7 +414,9 @@
     });
 
     addEventListener("keyup", (event) => {
-      keys.set(event.key.toLowerCase(), false);
+      const key = event.key.toLowerCase();
+      keys.set(key, false);
+      if (key === "w") cutPlayerJump();
     });
 
     function startRound() {
@@ -424,6 +434,8 @@
       round.message = "";
       crouchTapFrames = 0;
       attackBuffer = { name: null, frames: 0 };
+      directionTap = { direction: null, frames: 0 };
+      movementBuffer = { action: null, direction: 0, frames: 0 };
     }
 
     function onGround(f) {
@@ -431,11 +443,44 @@
     }
 
     function canAct(f) {
-      return ["idle", "walk", "crouch", "jump"].includes(f.state);
+      return ["idle", "walk", "run", "crouch", "jump"].includes(f.state);
     }
 
     function opponentOf(f) {
       return f === player ? enemy : player;
+    }
+
+    function directionForKey(f, key) {
+      const absoluteDirection = key === "d" ? 1 : -1;
+      return absoluteDirection === f.facing ? "forward" : "back";
+    }
+
+    function registerDirectionTap(key) {
+      const direction = directionForKey(player, key);
+      const isDoubleTap = directionTap.direction === direction && directionTap.frames > 0;
+
+      if (isDoubleTap) {
+        movementBuffer.action = direction === "forward" ? "run" : "backHop";
+        movementBuffer.direction = direction === "forward" ? player.facing : -player.facing;
+        movementBuffer.frames = inputConfig.dashBufferFrames;
+        directionTap.frames = 0;
+        return;
+      }
+
+      directionTap.direction = direction;
+      directionTap.frames = inputConfig.dashTapFrames;
+    }
+
+    function heldMoveDirection(intent) {
+      if (intent.left && !intent.right) return -1;
+      if (intent.right && !intent.left) return 1;
+      return 0;
+    }
+
+    function cutPlayerJump() {
+      if (player.state === "jump" && player.vy < inputConfig.jumpCutSpeed) {
+        player.vy = inputConfig.jumpCutSpeed;
+      }
     }
 
     function isGuardState(f) {
@@ -470,6 +515,22 @@
     function opponentIsAttacking(f) {
       const target = opponentOf(f);
       return target.state === "attack" && currentAttackData(target);
+    }
+
+    function startRun(f, direction) {
+      if (!canAct(f) || !onGround(f) || direction === 0) return false;
+      f.vx = direction * 5.25;
+      f.vy = 0;
+      setState(f, "run");
+      return true;
+    }
+
+    function startBackHop(f, direction) {
+      if (!canAct(f) || !onGround(f) || direction === 0) return false;
+      f.vx = direction * 5.4;
+      f.vy = -12.2;
+      setState(f, "backHop");
+      return true;
     }
 
     function startGuard(f, guardType) {
@@ -579,31 +640,49 @@
         left: false,
         right: false,
         up: false,
+        jumpHeld: false,
         down: false,
         attack: null,
+        movementAction: null,
+        movementDirection: 0,
         block: false,
         consumeAttack: () => {
           attackBuffer.name = null;
           attackBuffer.frames = 0;
         },
+        consumeMovement: () => {
+          movementBuffer.action = null;
+          movementBuffer.direction = 0;
+          movementBuffer.frames = 0;
+        },
       };
       intent.left = keys.get("a");
       intent.right = keys.get("d");
       intent.up = justPressed.has("w");
+      intent.jumpHeld = keys.get("w");
       intent.down = keys.get("s") || crouchTapFrames > 0;
       intent.attack = attackBuffer.name;
+      intent.movementAction = movementBuffer.action;
+      intent.movementDirection = movementBuffer.direction;
       intent.block = false;
       return intent;
     }
 
     function updateInputBuffers() {
       if (!keys.get("s")) crouchTapFrames = Math.max(0, crouchTapFrames - 1);
+      if (directionTap.frames > 0) directionTap.frames -= 1;
+      if (directionTap.frames <= 0) directionTap.direction = null;
+      if (movementBuffer.frames > 0) movementBuffer.frames -= 1;
+      if (movementBuffer.frames <= 0) {
+        movementBuffer.action = null;
+        movementBuffer.direction = 0;
+      }
       if (attackBuffer.frames > 0) attackBuffer.frames -= 1;
       if (attackBuffer.frames <= 0) attackBuffer.name = null;
     }
 
     function aiIntent(ai, target) {
-      const intent = { left: false, right: false, up: false, down: false, attack: null, block: false };
+      const intent = { left: false, right: false, up: false, jumpHeld: true, down: false, attack: null, block: false };
       const distance = Math.abs(target.x - ai.x);
       const targetOnRight = target.x > ai.x;
       const targetAttack = currentAttackData(target);
@@ -692,6 +771,16 @@
 
       if (f.state === "blockstun" || f.state === "guardRecovery") return;
 
+      if (intent.movementAction === "run" && startRun(f, intent.movementDirection)) {
+        if (intent.consumeMovement) intent.consumeMovement();
+        return;
+      }
+
+      if (intent.movementAction === "backHop" && startBackHop(f, intent.movementDirection)) {
+        if (intent.consumeMovement) intent.consumeMovement();
+        return;
+      }
+
       if (f.state === "guardStartup") {
         if (shouldGuard) {
           f.guardType = guardType;
@@ -720,24 +809,35 @@
         return;
       }
 
-      const speed = onGround(f) ? 2.8 : 1.85;
+      const grounded = onGround(f);
+      const speed = 2.8;
       if (canAct(f)) {
-        if (intent.down && onGround(f)) {
+        if (!grounded) return;
+
+        if (intent.down) {
           f.vx *= 0.58;
           setState(f, "crouch");
+        } else if (f.state === "run") {
+          const moveDirection = heldMoveDirection(intent);
+          if (moveDirection === f.facing) {
+            f.vx = f.facing * 5.25;
+          } else {
+            f.vx *= 0.62;
+            if (Math.abs(f.vx) < 0.55) setState(f, "idle");
+          }
         } else if (intent.left && !intent.right) {
           f.vx = -speed;
-          if (onGround(f)) setState(f, "walk");
+          setState(f, "walk");
         } else if (intent.right && !intent.left) {
           f.vx = speed;
-          if (onGround(f)) setState(f, "walk");
+          setState(f, "walk");
         } else {
-          f.vx *= onGround(f) ? 0.68 : 0.95;
-          if (Math.abs(f.vx) < 0.15 && onGround(f)) setState(f, intent.down ? "crouch" : "idle");
+          f.vx *= 0.68;
+          if (Math.abs(f.vx) < 0.15) setState(f, intent.down ? "crouch" : "idle");
         }
 
-        if (intent.up && onGround(f)) {
-          f.vy = -18;
+        if (intent.up) {
+          f.vy = intent.jumpHeld ? inputConfig.jumpSpeed : inputConfig.shortHopSpeed;
           setState(f, "jump");
         }
       }
@@ -791,13 +891,17 @@
         if (f.stateFrame > 48 && f.health > 0) setState(f, "idle");
       }
 
+      if (f.state === "backHop") {
+        f.vx *= 0.985;
+      }
+
       if (!onGround(f) || f.vy < 0) {
         f.vy += gravity;
         f.y += f.vy;
         if (f.y >= floorY) {
           f.y = floorY;
           f.vy = 0;
-          if (f.state === "jump") setState(f, "idle");
+          if (f.state === "jump" || f.state === "backHop") setState(f, "idle");
         }
       }
 
@@ -1037,7 +1141,7 @@
 
       const activeAttack = currentAttackData(f);
       const airbornePose = !onGround(f) || (f.state === "attack" && activeAttack && activeAttack.airborne);
-      const bob = f.state === "walk" ? Math.sin(f.stateFrame * 0.35) * 2 : airbornePose ? -3 : 0;
+      const bob = f.state === "walk" || f.state === "run" ? Math.sin(f.stateFrame * 0.35) * 2 : airbornePose ? -3 : 0;
       const crouch = isCrouchingPosture(f);
       const bodyH = crouch ? 70 : 94;
       const flash = f.hitFlash > 0;
