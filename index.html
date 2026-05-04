@@ -88,7 +88,7 @@
     </section>
     <div class="hint">
       <span>1 开始 / 重开　2 暂停</span>
-      <span>ASDW 移动　U/I 拳　J/K 腿</span>
+      <span>ASDW 移动　U轻拳 I轻腿 J重拳 K重腿　S蹲 / S+攻击</span>
     </div>
   </main>
 
@@ -105,6 +105,13 @@
     const maxFrameMs = simStepMs * 5;
     const keys = new Map();
     const justPressed = new Set();
+    const guardConfig = {
+      startup: 3,
+      recovery: 5,
+      blockstun: 11,
+      defenderPush: 0.62,
+      attackerPush: 0.25,
+    };
 
     const attacks = {
       lightPunch: {
@@ -115,6 +122,7 @@
         damage: 6,
         hitstun: 17,
         push: 4.5,
+        hitLevel: "high",
         box: { x: 44, y: -86, w: 44, h: 22 },
       },
       heavyPunch: {
@@ -125,6 +133,7 @@
         damage: 12,
         hitstun: 25,
         push: 7,
+        hitLevel: "mid",
         box: { x: 50, y: -88, w: 62, h: 28 },
       },
       lightKick: {
@@ -135,25 +144,84 @@
         damage: 8,
         hitstun: 19,
         push: 5,
+        hitLevel: "mid",
         box: { x: 35, y: -50, w: 70, h: 24 },
       },
       heavyKick: {
         label: "重腿",
         startup: 16,
         active: 7,
-        recovery: 26,
+        recovery: 28,
         damage: 14,
         hitstun: 29,
         push: 8,
-        box: { x: 44, y: -58, w: 86, h: 28 },
+        hitLevel: "mid",
+        box: { x: 40, y: -68, w: 86, h: 28 },
+      },
+      crouchLightPunch: {
+        label: "下轻拳",
+        startup: 7,
+        active: 5,
+        recovery: 13,
+        damage: 5,
+        hitstun: 15,
+        push: 3.8,
+        hitLevel: "mid",
+        crouching: true,
+        box: { x: 36, y: -58, w: 42, h: 20 },
+      },
+      crouchLightKick: {
+        label: "下轻腿",
+        startup: 8,
+        active: 5,
+        recovery: 15,
+        damage: 6,
+        hitstun: 16,
+        push: 4.2,
+        hitLevel: "low",
+        crouching: true,
+        pose: "lowKick",
+        box: { x: 30, y: -32, w: 72, h: 18 },
+      },
+      crouchHeavyPunch: {
+        label: "下重拳",
+        startup: 11,
+        active: 7,
+        recovery: 25,
+        damage: 12,
+        hitstun: 24,
+        push: 6.2,
+        hitLevel: "mid",
+        crouching: true,
+        pose: "antiAir",
+        box: { x: 28, y: -122, w: 48, h: 62 },
+      },
+      crouchHeavyKick: {
+        label: "下重腿",
+        startup: 15,
+        active: 8,
+        recovery: 42,
+        damage: 14,
+        hitstun: 29,
+        push: 8,
+        hitLevel: "low",
+        crouching: true,
+        pose: "sweep",
+        box: { x: 34, y: -32, w: 96, h: 22 },
       },
     };
 
     const keyToAttack = {
       u: "lightPunch",
-      i: "heavyPunch",
-      j: "lightKick",
+      i: "lightKick",
+      j: "heavyPunch",
       k: "heavyKick",
+    };
+    const crouchAttackNames = {
+      lightPunch: "crouchLightPunch",
+      lightKick: "crouchLightKick",
+      heavyPunch: "crouchHeavyPunch",
+      heavyKick: "crouchHeavyKick",
     };
 
     const round = {
@@ -183,7 +251,8 @@
         stateFrame: 0,
         attackName: null,
         hasHit: false,
-        blockTimer: 0,
+        guardType: null,
+        blockstunFrames: 0,
         hitFlash: 0,
         ai: {
           enabled: !controlledByPlayer,
@@ -192,6 +261,9 @@
           planTimer: 0,
           attackCooldown: 0,
           guardBias: 0.42,
+          guardCooldown: 0,
+          guardReactionTimer: 0,
+          guardReactionType: "stand",
         },
         palette,
         controlledByPlayer,
@@ -252,11 +324,68 @@
     }
 
     function canAct(f) {
-      return ["idle", "walk", "crouch", "block"].includes(f.state);
+      return ["idle", "walk", "crouch"].includes(f.state);
     }
 
     function opponentOf(f) {
       return f === player ? enemy : player;
+    }
+
+    function isGuardState(f) {
+      return ["guardStartup", "block", "blockstun", "guardRecovery"].includes(f.state);
+    }
+
+    function guardTypeFromIntent(f, intent, target = opponentOf(f)) {
+      const targetOnRight = target.x > f.x;
+      const holdingBack = targetOnRight
+        ? intent.left && !intent.right
+        : intent.right && !intent.left;
+
+      if (!holdingBack || !onGround(f)) return null;
+      return intent.down ? "crouch" : "stand";
+    }
+
+    function attackNameFromIntent(f, intent) {
+      if (!intent.attack) return null;
+      const wantsCrouchAttack = intent.down && onGround(f);
+      return wantsCrouchAttack ? crouchAttackNames[intent.attack] : intent.attack;
+    }
+
+    function setBackDirection(intent, f, target, crouch = false) {
+      const targetOnRight = target.x > f.x;
+      intent.left = targetOnRight;
+      intent.right = !targetOnRight;
+      intent.down = crouch;
+      intent.block = true;
+    }
+
+    function opponentIsAttacking(f) {
+      const target = opponentOf(f);
+      return target.state === "attack" && currentAttackData(target);
+    }
+
+    function startGuard(f, guardType) {
+      if (!canAct(f) || !onGround(f)) return false;
+      f.guardType = guardType;
+      f.attackName = null;
+      f.hasHit = false;
+      setState(f, "guardStartup");
+      f.vx *= 0.35;
+      return true;
+    }
+
+    function startGuardRecovery(f) {
+      f.guardType = null;
+      f.blockstunFrames = 0;
+      setState(f, "guardRecovery");
+      f.vx *= 0.45;
+    }
+
+    function guardBeatsHit(guardType, data, attacker) {
+      const hitLevel = !onGround(attacker) ? "overhead" : data.hitLevel;
+      if (hitLevel === "low") return guardType === "crouch";
+      if (hitLevel === "overhead" || data.mustStandBlock) return guardType === "stand";
+      return guardType === "stand" || guardType === "crouch";
     }
 
     function startAttack(f, attackName) {
@@ -265,7 +394,8 @@
       f.stateFrame = 0;
       f.attackName = attackName;
       f.hasHit = false;
-      f.blockTimer = 0;
+      f.guardType = null;
+      f.blockstunFrames = 0;
       return true;
     }
 
@@ -277,7 +407,7 @@
     }
 
     function hurtbox(f) {
-      const crouch = f.state === "crouch" || f.state === "block";
+      const crouch = isCrouchingPosture(f);
       const height = crouch ? 74 : f.h;
       return {
         x: f.x - f.w / 2,
@@ -298,6 +428,11 @@
 
     function currentAttackData(f) {
       return f.attackName ? attacks[f.attackName] : null;
+    }
+
+    function isCrouchingPosture(f) {
+      const data = currentAttackData(f);
+      return f.state === "crouch" || (isGuardState(f) && f.guardType === "crouch") || (f.state === "attack" && data && data.crouching);
     }
 
     function attackIsActive(f) {
@@ -327,35 +462,36 @@
       for (const key of ["u", "i", "j", "k"]) {
         if (justPressed.has(key)) intent.attack = keyToAttack[key];
       }
-      intent.block = intent.down;
+      intent.block = false;
       return intent;
     }
 
     function aiIntent(ai, target) {
       const intent = { left: false, right: false, up: false, down: false, attack: null, block: false };
       const distance = Math.abs(target.x - ai.x);
-      const incomingBox = attackbox(target);
-      const threatened = incomingBox && rectsOverlap(incomingBox, {
-        x: ai.x - 74,
-        y: ai.y - 108,
-        w: 148,
-        h: 108,
-      });
+      const targetOnRight = target.x > ai.x;
+      const targetAttack = currentAttackData(target);
+      const targetThreatening = target.state === "attack" && targetAttack && distance < 172 && onGround(ai);
 
       ai.ai.thinkFrame += 1;
       ai.ai.planTimer -= 1;
       ai.ai.attackCooldown = Math.max(0, ai.ai.attackCooldown - 1);
+      ai.ai.guardCooldown = Math.max(0, ai.ai.guardCooldown - 1);
+      ai.ai.guardReactionTimer = Math.max(0, ai.ai.guardReactionTimer - 1);
 
-      if (threatened && canAct(ai)) {
-        if (Math.random() < ai.ai.guardBias) {
-          intent.down = true;
-          intent.block = true;
+      if (targetThreatening && canAct(ai) && ai.ai.guardCooldown === 0) {
+        if (ai.ai.guardReactionTimer === 0 && Math.random() < ai.ai.guardBias) {
+          ai.ai.guardReactionTimer = 9 + Math.floor(Math.random() * 10);
+          ai.ai.guardReactionType = targetAttack.hitLevel === "low" ? "crouch" : "stand";
+        }
+
+        if (ai.ai.guardReactionTimer <= 1) {
+          setBackDirection(intent, ai, target, ai.ai.guardReactionType === "crouch");
           ai.ai.plan = "guard";
-          ai.ai.planTimer = 12;
+          ai.ai.planTimer = 10 + Math.floor(Math.random() * 10);
+          ai.ai.guardCooldown = 28 + Math.floor(Math.random() * 18);
           return intent;
         }
-        ai.ai.plan = "retreat";
-        ai.ai.planTimer = 16;
       }
 
       if (ai.ai.planTimer <= 0 || ai.ai.thinkFrame % 18 === 0) {
@@ -367,23 +503,23 @@
           ai.ai.plan = roll < 0.5 ? "approach" : roll < 0.78 ? "poke" : "retreat";
           ai.ai.planTimer = 16 + Math.floor(Math.random() * 22);
         } else {
-          ai.ai.plan = roll < 0.44 ? "attack" : roll < 0.68 ? "guard" : roll < 0.84 ? "retreat" : "jump";
+          ai.ai.plan = roll < 0.44 ? "attack" : roll < 0.68 && ai.ai.guardCooldown === 0 ? "guard" : roll < 0.84 ? "retreat" : "jump";
           ai.ai.planTimer = 12 + Math.floor(Math.random() * 18);
+          if (ai.ai.plan === "guard") {
+            ai.ai.planTimer = 10 + Math.floor(Math.random() * 14);
+            ai.ai.guardCooldown = 34 + Math.floor(Math.random() * 28);
+          }
         }
       }
 
-      const targetOnRight = target.x > ai.x;
       if (ai.ai.plan === "approach") {
         intent.right = targetOnRight;
         intent.left = !targetOnRight;
       } else if (ai.ai.plan === "retreat") {
         intent.left = targetOnRight;
         intent.right = !targetOnRight;
-        intent.block = distance < 160;
-        intent.down = intent.block;
       } else if (ai.ai.plan === "guard") {
-        intent.down = true;
-        intent.block = true;
+        setBackDirection(intent, ai, target, Math.random() < 0.45);
       } else if (ai.ai.plan === "jump" && onGround(ai)) {
         intent.up = true;
         intent.right = targetOnRight;
@@ -406,14 +542,32 @@
 
     function applyIntent(f, intent) {
       if (f.state === "hitstun" || f.state === "knockdown") return;
+      const guardType = guardTypeFromIntent(f, intent);
+      const shouldGuard = guardType && (intent.block || opponentIsAttacking(f));
 
-      if (intent.attack && startAttack(f, intent.attack)) return;
+      if (f.state === "blockstun" || f.state === "guardRecovery") return;
 
-      if (intent.block && onGround(f) && canAct(f)) {
-        setState(f, "block");
-        f.vx *= 0.6;
+      if (f.state === "guardStartup") {
+        if (!shouldGuard) startGuardRecovery(f);
         return;
       }
+
+      if (f.state === "block") {
+        if (shouldGuard) {
+          f.guardType = guardType;
+          f.vx *= 0.45;
+        } else {
+          startGuardRecovery(f);
+        }
+        return;
+      }
+
+      if (shouldGuard && startGuard(f, guardType)) {
+        return;
+      }
+
+      const attackName = attackNameFromIntent(f, intent);
+      if (attackName && startAttack(f, attackName)) return;
 
       const speed = onGround(f) ? 2.8 : 1.85;
       if (canAct(f)) {
@@ -438,7 +592,6 @@
     function updateFighter(f) {
       f.stateFrame += 1;
       f.hitFlash = Math.max(0, f.hitFlash - 1);
-      f.blockTimer = Math.max(0, f.blockTimer - 1);
 
       if (f.state === "attack") {
         const data = currentAttackData(f);
@@ -448,6 +601,25 @@
           f.hasHit = false;
           setState(f, onGround(f) ? "idle" : "jump");
         }
+      }
+
+      if (f.state === "guardStartup") {
+        f.vx *= 0.58;
+        if (f.stateFrame >= guardConfig.startup) setState(f, "block");
+      }
+
+      if (f.state === "block") {
+        f.vx *= 0.62;
+      }
+
+      if (f.state === "blockstun") {
+        f.vx *= 0.84;
+        if (f.stateFrame >= f.blockstunFrames) setState(f, "block");
+      }
+
+      if (f.state === "guardRecovery") {
+        f.vx *= 0.7;
+        if (f.stateFrame >= guardConfig.recovery) setState(f, onGround(f) ? "idle" : "jump");
       }
 
       if (f.state === "hitstun") {
@@ -490,10 +662,10 @@
       }
     }
 
-    function canBlock(defender, attacker) {
-      const holdingGuard = defender.state === "block" || defender.blockTimer > 0;
+    function canBlock(defender, attacker, data) {
+      const holdingGuard = defender.state === "block" || defender.state === "blockstun";
       const facingAttack = defender.facing === (attacker.x < defender.x ? -1 : 1);
-      return holdingGuard && facingAttack && onGround(defender);
+      return holdingGuard && facingAttack && onGround(defender) && guardBeatsHit(defender.guardType, data, attacker);
     }
 
     function checkHits() {
@@ -507,10 +679,12 @@
 
         const data = currentAttackData(attacker);
         attacker.hasHit = true;
-        if (canBlock(defender, attacker)) {
-          defender.blockTimer = 10;
-          defender.vx += attacker.facing * data.push * 0.55;
-          attacker.vx -= attacker.facing * 1.1;
+        if (canBlock(defender, attacker, data)) {
+          defender.blockstunFrames = data.blockstun || guardConfig.blockstun;
+          setState(defender, "blockstun");
+          defender.vx += attacker.facing * data.push * guardConfig.defenderPush;
+          attacker.vx -= attacker.facing * data.push * guardConfig.attackerPush;
+          attacker.energy = Math.min(100, attacker.energy + 2);
           spawnSpark(box.x + box.w / 2, box.y + box.h / 2, "#90e4ff", 7);
         } else {
           defender.health = Math.max(0, defender.health - data.damage);
@@ -518,6 +692,8 @@
           attacker.energy = Math.min(100, attacker.energy + 5);
           defender.hitFlash = 8;
           defender.hitstunFrames = data.hitstun;
+          defender.guardType = null;
+          defender.blockstunFrames = 0;
           defender.vx = attacker.facing * data.push;
           defender.vy = defender.health <= 0 ? -7 : defender.vy;
           setState(defender, defender.health <= 0 ? "knockdown" : "hitstun");
@@ -649,7 +825,7 @@
       ctx.scale(f.facing, 1);
 
       const bob = f.state === "walk" ? Math.sin(f.stateFrame * 0.35) * 2 : 0;
-      const crouch = f.state === "crouch" || f.state === "block";
+      const crouch = isCrouchingPosture(f);
       const bodyH = crouch ? 70 : 94;
       const flash = f.hitFlash > 0;
 
@@ -675,7 +851,7 @@
       ctx.fillStyle = "#181318";
       ctx.fillRect(3, -bodyH - 22 + bob, 6, 5);
 
-      const guard = f.state === "block";
+      const guard = ["guardStartup", "block", "blockstun"].includes(f.state);
       let leftArm = { x: -38, y: -bodyH + 12 + bob, w: 16, h: 48 };
       let rightArm = { x: 22, y: -bodyH + 12 + bob, w: 16, h: 48 };
 
@@ -683,7 +859,11 @@
         const data = currentAttackData(f);
         const progress = Math.min(1, f.stateFrame / Math.max(1, data.startup + data.active));
         const thrust = attackIsActive(f) ? 34 : progress * 20;
-        if (f.attackName.includes("Punch")) {
+        if (data.pose === "antiAir") {
+          rightArm = { x: 10, y: -bodyH - 30 + bob, w: 18, h: 76 };
+        } else if (data.pose === "sweep" || data.pose === "lowKick") {
+          rightArm = { x: 6, y: -28 + bob, w: 78 + thrust, h: 15 };
+        } else if (f.attackName.includes("Punch")) {
           rightArm = { x: 20, y: -bodyH + 16 + bob, w: 28 + thrust, h: 18 };
         } else {
           rightArm = { x: 8, y: -48 + bob, w: 70 + thrust, h: 18 };
