@@ -105,9 +105,15 @@
     const maxFrameMs = simStepMs * 5;
     const keys = new Map();
     const justPressed = new Set();
+    const inputConfig = {
+      crouchTapHoldFrames: 4,
+      attackBufferFrames: 10,
+    };
+    let crouchTapFrames = 0;
+    let attackBuffer = { name: null, frames: 0 };
     const guardConfig = {
-      startup: 3,
-      recovery: 5,
+      startup: 1,
+      recovery: 2,
       blockstun: 11,
       defenderPush: 0.62,
       attackerPush: 0.25,
@@ -122,7 +128,11 @@
         damage: 6,
         hitstun: 17,
         push: 4.5,
+        hitRecoil: 1.55,
         hitLevel: "high",
+        chainCancel: true,
+        chainFollowup: true,
+        chainWindow: 10,
         box: { x: 44, y: -86, w: 44, h: 22 },
       },
       heavyPunch: {
@@ -144,7 +154,11 @@
         damage: 8,
         hitstun: 19,
         push: 5,
+        hitRecoil: 1.45,
         hitLevel: "mid",
+        chainCancel: true,
+        chainFollowup: true,
+        chainWindow: 10,
         box: { x: 35, y: -50, w: 70, h: 24 },
       },
       heavyKick: {
@@ -166,7 +180,11 @@
         damage: 5,
         hitstun: 15,
         push: 3.8,
+        hitRecoil: 1.35,
         hitLevel: "mid",
+        chainCancel: true,
+        chainFollowup: true,
+        chainWindow: 10,
         crouching: true,
         box: { x: 36, y: -58, w: 42, h: 20 },
       },
@@ -176,9 +194,14 @@
         active: 5,
         recovery: 15,
         damage: 6,
-        hitstun: 16,
-        push: 4.2,
+        hitstun: 21,
+        push: 5.2,
+        hitRecoil: 1.55,
         hitLevel: "low",
+        mustCrouchBlock: true,
+        chainCancel: true,
+        chainFollowup: true,
+        chainWindow: 11,
         crouching: true,
         pose: "lowKick",
         box: { x: 30, y: -32, w: 72, h: 18 },
@@ -205,6 +228,7 @@
         hitstun: 29,
         push: 8,
         hitLevel: "low",
+        mustCrouchBlock: true,
         crouching: true,
         pose: "sweep",
         box: { x: 34, y: -32, w: 96, h: 22 },
@@ -232,6 +256,12 @@
       frame: 0,
       message: "按 1 开始",
       sparks: [],
+      combo: {
+        attacker: null,
+        defender: null,
+        count: 0,
+        timer: 0,
+      },
     };
 
     function makeFighter(id, name, x, palette, controlledByPlayer) {
@@ -254,6 +284,7 @@
         guardType: null,
         blockstunFrames: 0,
         hitFlash: 0,
+        comboCancelFrames: 0,
         ai: {
           enabled: !controlledByPlayer,
           thinkFrame: 0,
@@ -291,7 +322,14 @@
       if (["a", "s", "d", "w", "u", "i", "j", "k", "1", "2"].includes(key)) {
         event.preventDefault();
       }
-      if (!keys.get(key)) justPressed.add(key);
+      if (!keys.get(key)) {
+        justPressed.add(key);
+        if (key === "s") crouchTapFrames = inputConfig.crouchTapHoldFrames;
+      }
+      if (keyToAttack[key]) {
+        attackBuffer.name = keyToAttack[key];
+        attackBuffer.frames = inputConfig.attackBufferFrames;
+      }
       keys.set(key, true);
 
       if (key === "1") startRound();
@@ -316,7 +354,10 @@
       round.timer = 99;
       round.frame = 0;
       round.sparks = [];
+      round.combo = { attacker: null, defender: null, count: 0, timer: 0 };
       round.message = "";
+      crouchTapFrames = 0;
+      attackBuffer = { name: null, frames: 0 };
     }
 
     function onGround(f) {
@@ -383,20 +424,33 @@
 
     function guardBeatsHit(guardType, data, attacker) {
       const hitLevel = !onGround(attacker) ? "overhead" : data.hitLevel;
-      if (hitLevel === "low") return guardType === "crouch";
+      if (hitLevel === "low" || data.mustCrouchBlock) return guardType === "crouch";
       if (hitLevel === "overhead" || data.mustStandBlock) return guardType === "stand";
       return guardType === "stand" || guardType === "crouch";
     }
 
-    function startAttack(f, attackName) {
-      if (!canAct(f)) return false;
+    function startAttack(f, attackName, force = false) {
+      if (!force && !canAct(f)) return false;
       f.state = "attack";
       f.stateFrame = 0;
       f.attackName = attackName;
       f.hasHit = false;
       f.guardType = null;
       f.blockstunFrames = 0;
+      f.comboCancelFrames = 0;
       return true;
+    }
+
+    function canHitCancelAttack(f, attackName) {
+      const current = currentAttackData(f);
+      const next = attacks[attackName];
+      return f.state === "attack"
+        && f.comboCancelFrames > 0
+        && current
+        && current.chainCancel
+        && next
+        && next.chainFollowup
+        && onGround(f);
     }
 
     function setState(f, state) {
@@ -454,16 +508,31 @@
     }
 
     function playerIntent() {
-      const intent = { left: false, right: false, up: false, down: false, attack: null, block: false };
+      const intent = {
+        left: false,
+        right: false,
+        up: false,
+        down: false,
+        attack: null,
+        block: false,
+        consumeAttack: () => {
+          attackBuffer.name = null;
+          attackBuffer.frames = 0;
+        },
+      };
       intent.left = keys.get("a");
       intent.right = keys.get("d");
       intent.up = justPressed.has("w");
-      intent.down = keys.get("s");
-      for (const key of ["u", "i", "j", "k"]) {
-        if (justPressed.has(key)) intent.attack = keyToAttack[key];
-      }
+      intent.down = keys.get("s") || crouchTapFrames > 0;
+      intent.attack = attackBuffer.name;
       intent.block = false;
       return intent;
+    }
+
+    function updateInputBuffers() {
+      if (!keys.get("s")) crouchTapFrames = Math.max(0, crouchTapFrames - 1);
+      if (attackBuffer.frames > 0) attackBuffer.frames -= 1;
+      if (attackBuffer.frames <= 0) attackBuffer.name = null;
     }
 
     function aiIntent(ai, target) {
@@ -544,11 +613,24 @@
       if (f.state === "hitstun" || f.state === "knockdown") return;
       const guardType = guardTypeFromIntent(f, intent);
       const shouldGuard = guardType && (intent.block || opponentIsAttacking(f));
+      const attackName = attackNameFromIntent(f, intent);
+
+      if (attackName && canHitCancelAttack(f, attackName)) {
+        startAttack(f, attackName, true);
+        if (intent.consumeAttack) intent.consumeAttack();
+        return;
+      }
+
+      if (f.state === "attack") return;
 
       if (f.state === "blockstun" || f.state === "guardRecovery") return;
 
       if (f.state === "guardStartup") {
-        if (!shouldGuard) startGuardRecovery(f);
+        if (shouldGuard) {
+          f.guardType = guardType;
+        } else {
+          startGuardRecovery(f);
+        }
         return;
       }
 
@@ -566,12 +648,17 @@
         return;
       }
 
-      const attackName = attackNameFromIntent(f, intent);
-      if (attackName && startAttack(f, attackName)) return;
+      if (attackName && startAttack(f, attackName)) {
+        if (intent.consumeAttack) intent.consumeAttack();
+        return;
+      }
 
       const speed = onGround(f) ? 2.8 : 1.85;
       if (canAct(f)) {
-        if (intent.left && !intent.right) {
+        if (intent.down && onGround(f)) {
+          f.vx *= 0.58;
+          setState(f, "crouch");
+        } else if (intent.left && !intent.right) {
           f.vx = -speed;
           if (onGround(f)) setState(f, "walk");
         } else if (intent.right && !intent.left) {
@@ -595,10 +682,12 @@
 
       if (f.state === "attack") {
         const data = currentAttackData(f);
+        f.comboCancelFrames = Math.max(0, f.comboCancelFrames - 1);
         f.vx *= onGround(f) ? 0.58 : 0.92;
         if (data && f.stateFrame > data.startup + data.active + data.recovery) {
           f.attackName = null;
           f.hasHit = false;
+          f.comboCancelFrames = 0;
           setState(f, onGround(f) ? "idle" : "jump");
         }
       }
@@ -625,6 +714,7 @@
       if (f.state === "hitstun") {
         f.vx *= 0.9;
         if (f.stateFrame > f.hitstunFrames) {
+          f.comboCancelFrames = 0;
           setState(f, onGround(f) ? "idle" : "jump");
         }
       }
@@ -668,6 +758,33 @@
       return holdingGuard && facingAttack && onGround(defender) && guardBeatsHit(defender.guardType, data, attacker);
     }
 
+    function clearCombo() {
+      round.combo.attacker = null;
+      round.combo.defender = null;
+      round.combo.count = 0;
+      round.combo.timer = 0;
+    }
+
+    function registerHitCombo(attacker, defender, box) {
+      const trueFollowup = defender.state === "hitstun"
+        && round.combo.attacker === attacker
+        && round.combo.defender === defender
+        && round.combo.count > 0;
+
+      if (trueFollowup) {
+        round.combo.count += 1;
+        round.combo.timer = 64;
+      } else {
+        round.combo.attacker = attacker;
+        round.combo.defender = defender;
+        round.combo.count = 1;
+        round.combo.timer = 0;
+      }
+
+      round.combo.x = box.x + box.w / 2;
+      round.combo.y = box.y - 18;
+    }
+
     function checkHits() {
       for (const attacker of fighters) {
         if (attacker.state !== "attack" || attacker.hasHit) continue;
@@ -680,6 +797,7 @@
         const data = currentAttackData(attacker);
         attacker.hasHit = true;
         if (canBlock(defender, attacker, data)) {
+          clearCombo();
           defender.blockstunFrames = data.blockstun || guardConfig.blockstun;
           setState(defender, "blockstun");
           defender.vx += attacker.facing * data.push * guardConfig.defenderPush;
@@ -687,6 +805,7 @@
           attacker.energy = Math.min(100, attacker.energy + 2);
           spawnSpark(box.x + box.w / 2, box.y + box.h / 2, "#90e4ff", 7);
         } else {
+          registerHitCombo(attacker, defender, box);
           defender.health = Math.max(0, defender.health - data.damage);
           defender.energy = Math.min(100, defender.energy + 8);
           attacker.energy = Math.min(100, attacker.energy + 5);
@@ -694,7 +813,9 @@
           defender.hitstunFrames = data.hitstun;
           defender.guardType = null;
           defender.blockstunFrames = 0;
+          attacker.comboCancelFrames = data.chainCancel ? data.chainWindow || inputConfig.attackBufferFrames : 0;
           defender.vx = attacker.facing * data.push;
+          attacker.vx -= attacker.facing * (data.hitRecoil || 0.35);
           defender.vy = defender.health <= 0 ? -7 : defender.vy;
           setState(defender, defender.health <= 0 ? "knockdown" : "hitstun");
           spawnSpark(box.x + box.w / 2, box.y + box.h / 2, "#ffd166", 12);
@@ -730,9 +851,11 @@
 
       round.frame += 1;
       if (round.frame % 60 === 0) round.timer = Math.max(0, round.timer - 1);
+      round.combo.timer = Math.max(0, round.combo.timer - 1);
 
       applyIntent(player, playerIntent());
       applyIntent(enemy, aiIntent(enemy, player));
+      updateInputBuffers();
       updateFighter(player);
       updateFighter(enemy);
       resolveFacingAndBody();
@@ -808,6 +931,7 @@
 
       drawEnergy(38, 68, player.energy, false, "#ffe068");
       drawEnergy(W - 238, 68, enemy.energy, true, "#8df0c7");
+      drawCombo();
     }
 
     function drawEnergy(x, y, value, alignRight, color) {
@@ -817,6 +941,26 @@
       ctx.fillStyle = color;
       const fill = value / 100 * width;
       ctx.fillRect(alignRight ? x + width - fill : x, y, fill, 8);
+    }
+
+    function drawCombo() {
+      if (round.combo.count < 2 || round.combo.timer <= 0) return;
+
+      const playerCombo = round.combo.attacker === player;
+      const x = playerCombo ? 130 : W - 130;
+      const y = 126;
+      const alpha = Math.min(1, round.combo.timer / 14);
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.textAlign = playerCombo ? "left" : "right";
+      ctx.fillStyle = playerCombo ? "#ffe068" : "#8df0c7";
+      ctx.font = "900 34px Inter, sans-serif";
+      ctx.fillText(`COMBO ${round.combo.count}`, x, y);
+      ctx.fillStyle = "rgba(255, 244, 221, 0.74)";
+      ctx.font = "700 12px Inter, sans-serif";
+      ctx.fillText("TRUE HITSTUN CHAIN", x, y + 20);
+      ctx.restore();
     }
 
     function drawFighter(f) {
@@ -897,6 +1041,11 @@
         ctx.font = "700 13px Inter, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(data.label, f.x, f.y - f.h - 46);
+      } else if (f.state === "hitstun") {
+        ctx.fillStyle = "rgba(255, 218, 120, 0.86)";
+        ctx.font = "700 13px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("\u4e0d\u80fd\u9632\u5fa1", f.x, f.y - f.h - 46);
       }
     }
 
