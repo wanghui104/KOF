@@ -100,15 +100,18 @@
     const H = canvas.height;
     const floorY = 438;
     const gravity = 0.78;
+    const simFps = 60;
+    const simStepMs = 1000 / simFps;
+    const maxFrameMs = simStepMs * 5;
     const keys = new Map();
     const justPressed = new Set();
 
     const attacks = {
       lightPunch: {
         label: "轻拳",
-        startup: 5,
+        startup: 8,
         active: 5,
-        recovery: 13,
+        recovery: 16,
         damage: 6,
         hitstun: 17,
         push: 4.5,
@@ -116,9 +119,9 @@
       },
       heavyPunch: {
         label: "重拳",
-        startup: 10,
-        active: 7,
-        recovery: 22,
+        startup: 14,
+        active: 6,
+        recovery: 24,
         damage: 12,
         hitstun: 25,
         push: 7,
@@ -126,9 +129,9 @@
       },
       lightKick: {
         label: "轻腿",
-        startup: 7,
-        active: 6,
-        recovery: 15,
+        startup: 10,
+        active: 5,
+        recovery: 18,
         damage: 8,
         hitstun: 19,
         push: 5,
@@ -136,9 +139,9 @@
       },
       heavyKick: {
         label: "重腿",
-        startup: 12,
-        active: 8,
-        recovery: 24,
+        startup: 16,
+        active: 7,
+        recovery: 26,
         damage: 14,
         hitstun: 29,
         push: 8,
@@ -412,7 +415,7 @@
         return;
       }
 
-      const speed = onGround(f) ? 3.7 : 2.45;
+      const speed = onGround(f) ? 2.8 : 1.85;
       if (canAct(f)) {
         if (intent.left && !intent.right) {
           f.vx = -speed;
@@ -748,10 +751,21 @@
       drawMessage();
     }
 
-    function frame() {
-      updateRound();
+    let lastFrameTime = performance.now();
+    let simAccumulator = 0;
+
+    function frame(now) {
+      const elapsed = Math.min(now - lastFrameTime, maxFrameMs);
+      lastFrameTime = now;
+      simAccumulator += elapsed;
+
+      while (simAccumulator >= simStepMs) {
+        updateRound();
+        justPressed.clear();
+        simAccumulator -= simStepMs;
+      }
+
       draw();
-      justPressed.clear();
       requestAnimationFrame(frame);
     }
 
